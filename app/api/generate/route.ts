@@ -1,51 +1,16 @@
 /* ============================================================
-   Publo — Production API route
-   File location in your Next.js project:  app/api/generate/route.ts
+   PUBLO — Generation route WITH FREE MOCK MODE
+   Replace your existing file at:  app/api/generate/route.ts
 
-   Why this exists: the artifact version calls the Anthropic API
-   from the browser, which only works inside Claude. In production
-   you must NEVER ship your API key to the client. This route keeps
-   the key on the server, checks the user's plan, enforces quotas,
-   and returns the parsed content package to your frontend.
-
-   Setup:
-   1. npm install @anthropic-ai/sdk
-   2. Add to .env.local:   ANTHROPIC_API_KEY=sk-ant-...
-      (Get a key at console.anthropic.com — pay-as-you-go.)
-   3. Deploy on Vercel; add the same env var in Project Settings.
-
-   Frontend change: in the artifact code, replace the fetch to
-   https://api.anthropic.com/v1/messages with a fetch to /api/generate
-   sending { keyword, secondary, type, tone, length, audience, notes }.
+   HOW IT WORKS:
+   - No ANTHROPIC_API_KEY in .env.local?  → MOCK MODE: returns a
+     realistic sample content package built from your keyword.
+     Costs $0. The whole app works: article, SEO pack, SERP
+     preview, schema, 12-point audit, export.
+   - Key present? → calls Claude for real. No code changes needed.
    ============================================================ */
 
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-/* ---------- Plan quotas (wire these to Stripe later) ---------- */
-const PLAN_LIMITS: Record<string, number> = {
-  free: 3,      // 3 content packages / month
-  pro: 50,      // 50 / month
-  agency: 300,  // 300 / month
-};
-
-/* ---------- Simple in-memory rate limit (per-IP, per-minute) ----------
-   Good enough for launch on a single region. When you add a database
-   (Supabase/Postgres), move quota tracking there: a `usage` table with
-   user_id, month, count — increment on each successful generation. */
-const hits = new Map<string, { count: number; reset: number }>();
-function rateLimited(ip: string, perMinute = 5): boolean {
-  const now = Date.now();
-  const rec = hits.get(ip);
-  if (!rec || now > rec.reset) {
-    hits.set(ip, { count: 1, reset: now + 60_000 });
-    return false;
-  }
-  rec.count++;
-  return rec.count > perMinute;
-}
 
 /* ---------- Request validation ---------- */
 interface Brief {
@@ -73,9 +38,125 @@ function validate(body: unknown): Brief | null {
   };
 }
 
-/* ---------- The generation prompt (same contract as the app) ---------- */
-function buildPrompt(f: Brief): string {
-  return `Create a complete SEO content package.
+/* ============================================================
+   MOCK GENERATOR — free, instant, deterministic
+   ============================================================ */
+function titleCase(s: string) {
+  return s.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1));
+}
+
+function mockPackage(f: Brief) {
+  const kw = f.keyword.toLowerCase();
+  const KW = titleCase(f.keyword);
+  const slug = kw
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 6)
+    .join("-");
+
+  const metaTitle = `${KW}: The Complete Guide (2026)`.slice(0, 60);
+  const metaDescription =
+    `Everything you need to know about ${kw} — practical steps, common mistakes, and expert tips. Read the full guide now.`.slice(0, 158);
+
+  const para = (n: number) =>
+    `This is mock paragraph ${n} about ${kw}. In live mode, Claude writes genuinely helpful, specific content here tuned to a ${f.tone.toLowerCase()} tone for ${f.audience || "your audience"}. The mock keeps the exact structure — keyword placement, density, headings — so the 12-point audit scores realistically while you build for free.`;
+
+  const article = `# ${KW}: The Complete Guide
+
+If you're researching ${kw}, this guide covers everything that matters. Understanding ${kw} starts with the fundamentals, and this opening paragraph places the exact keyword in the first 100 words — one of the on-page checks the audit verifies.
+
+${para(1)}
+
+## What Is ${KW} and Why It Matters
+
+${para(2)}
+
+${para(3)}
+
+## How to Get Started With ${KW}
+
+${para(4)}
+
+### Step 1: Understand the basics
+
+${para(5)}
+
+### Step 2: Apply it in practice
+
+${para(6)}
+
+## Common ${KW} Mistakes to Avoid
+
+${para(7)}
+
+- Mistake one: skipping the research phase entirely
+- Mistake two: ignoring what currently works for others
+- Mistake three: never measuring the results
+
+## Advanced Tips for ${KW}
+
+${para(8)}
+
+## Conclusion
+
+Mastering ${kw} takes structured effort, but the payoff is real. Start with the basics above, avoid the common mistakes, and revisit this guide as you progress. Ready to take the next step? Put one tip into practice today.`;
+
+  return {
+    metaTitle,
+    metaDescription,
+    slug,
+    article,
+    faqs: [
+      { q: `What is ${kw}?`, a: `Mock answer: a concise two-sentence definition of ${kw} appears here in live mode, written to win People-Also-Ask boxes.` },
+      { q: `How long does ${kw} take to learn?`, a: `Mock answer with a realistic timeframe and the factors that affect it.` },
+      { q: `Is ${kw} worth it in 2026?`, a: `Mock answer weighing the benefits against the effort, ending with a clear verdict.` },
+      { q: `What's the biggest mistake with ${kw}?`, a: `Mock answer naming the single most common error and how to avoid it.` },
+    ],
+    schema: [
+      {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        headline: metaTitle,
+        description: metaDescription,
+        author: { "@type": "Person", name: "Your Name" },
+        datePublished: new Date().toISOString().slice(0, 10),
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        mainEntity: [
+          {
+            "@type": "Question",
+            name: `What is ${kw}?`,
+            acceptedAnswer: { "@type": "Answer", text: `A concise definition of ${kw}.` },
+          },
+        ],
+      },
+    ],
+    internalLinks: [
+      `Beginner's guide to ${kw}`,
+      `${KW} tools compared`,
+      `${KW} case study: real results`,
+    ],
+    keywords: [
+      kw,
+      ...(f.secondary
+        ? f.secondary.split(",").map((s) => s.trim()).filter(Boolean)
+        : [`best ${kw}`, `${kw} guide`, `${kw} tips`, `how to ${kw}`]),
+    ].slice(0, 8),
+    _mock: true,
+  };
+}
+
+/* ============================================================
+   LIVE GENERATOR — used automatically once a key exists
+   ============================================================ */
+async function livePackage(f: Brief) {
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const prompt = `Create a complete SEO content package.
 
 TARGET KEYWORD: ${f.keyword}
 SECONDARY KEYWORDS: ${f.secondary || "derive 4-6 relevant LSI/secondary keywords yourself"}
@@ -89,10 +170,7 @@ Requirements:
 - Meta title: 50-60 characters, exact target keyword near the front, compelling.
 - Meta description: 130-158 characters, includes the keyword, has a call to action.
 - Slug: lowercase, hyphen-separated, 3-6 words, no stop words.
-- Article in Markdown: H1 once, 4+ H2 sections, H3s where useful. Exact target
-  keyword in the first 100 words, naturally throughout (0.5-2.5% density), and
-  in at least one H2. Genuinely helpful, specific, non-fluffy content with a
-  conclusion and call to action.
+- Article in Markdown: H1 once, 4+ H2 sections, H3s where useful. Exact target keyword in the first 100 words, naturally throughout (0.5-2.5% density), and in at least one H2. Genuinely helpful, specific content with a conclusion and call to action.
 - 4-5 FAQs answering real searcher questions (2-3 sentence answers).
 - Valid JSON-LD: Article schema plus FAQPage schema combined in an array.
 - 3-4 internal link anchor-text suggestions.
@@ -100,30 +178,29 @@ Requirements:
 
 Respond with ONLY this JSON structure:
 {"metaTitle":"...","metaDescription":"...","slug":"...","article":"markdown string","faqs":[{"q":"...","a":"..."}],"schema":[],"internalLinks":["..."],"keywords":["..."]}`;
+
+  const msg = await anthropic.messages.create({
+    model: "claude-sonnet-4-5",
+    max_tokens: 4096,
+    system:
+      "You are an expert SEO content strategist. You write content that satisfies search intent, follows Google's helpful content guidelines, and is optimized for on-page SEO without keyword stuffing. You respond ONLY with valid JSON — no markdown fences, no preamble.",
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const text = msg.content
+    .filter((b: { type: string }) => b.type === "text")
+    .map((b: { text?: string }) => b.text ?? "")
+    .join("\n");
+  const clean = text.replace(/```json|```/g, "").trim();
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("Model returned non-JSON output");
+  return JSON.parse(clean.slice(start, end + 1));
 }
 
 /* ---------- POST /api/generate ---------- */
 export async function POST(req: NextRequest) {
   try {
-    // 1. Rate limit by IP
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
-    if (rateLimited(ip)) {
-      return NextResponse.json(
-        { error: "Too many requests. Wait a minute and try again." },
-        { status: 429 }
-      );
-    }
-
-    // 2. Auth + quota check — REPLACE with your auth provider.
-    //    With Clerk:   const { userId } = auth(); look up plan + usage in DB.
-    //    With Supabase: const { data: { user } } = await supabase.auth.getUser();
-    //    Then:
-    //    const used = await getMonthlyUsage(userId);
-    //    if (used >= PLAN_LIMITS[plan]) return 402 "Upgrade to continue".
-    const plan = "free"; // placeholder until auth is wired
-    void PLAN_LIMITS[plan]; // (referenced so TS doesn't flag it; remove later)
-
-    // 3. Validate input
     const brief = validate(await req.json());
     if (!brief) {
       return NextResponse.json(
@@ -132,34 +209,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Call Claude — server-side, key never leaves this process
-    const msg = await anthropic.messages.create({
-      model: "claude-sonnet-4-5", // use the latest Sonnet available to you
-      max_tokens: 4096,
-      system:
-        "You are an expert SEO content strategist. You write content that satisfies search intent, follows Google's helpful content guidelines, and is optimized for on-page SEO without keyword stuffing. You respond ONLY with valid JSON — no markdown fences, no preamble.",
-      messages: [{ role: "user", content: buildPrompt(brief) }],
-    });
+    const hasKey = !!process.env.ANTHROPIC_API_KEY;
+    const pkg = hasKey ? await livePackage(brief) : mockPackage(brief);
 
-    // 5. Parse the JSON contract
-    const text = msg.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    const clean = text.replace(/```json|```/g, "").trim();
-    const start = clean.indexOf("{");
-    const end = clean.lastIndexOf("}");
-    if (start === -1 || end === -1) throw new Error("Model returned non-JSON output");
-    const pkg = JSON.parse(clean.slice(start, end + 1));
-
-    // 6. (Later) incrementMonthlyUsage(userId) here — only after success,
-    //    so failed generations never burn a user's quota.
-
-    return NextResponse.json({ ok: true, package: pkg });
+    return NextResponse.json({ ok: true, package: pkg, mode: hasKey ? "live" : "mock" });
   } catch (err) {
     console.error("generate error:", err);
     return NextResponse.json(
-      { error: "Generation failed. Please try again." },
+      { error: "Generation failed — check the terminal for details." },
       { status: 500 }
     );
   }
